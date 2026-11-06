@@ -5,7 +5,6 @@ import tempfile
 # Configuración aislada: nunca toca los datos reales de la computadora.
 os.environ["INVENTARIO_CARPETA_LOCAL"] = tempfile.mkdtemp(prefix="inv_test_local_")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ["INVENTARIO_SIN_NUBE"] = "1"   # las pruebas nunca se conectan a GitHub
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
@@ -25,3 +24,16 @@ def base(carpeta):
     d = BD.Database()
     yield d
     d.con.close()
+
+
+@pytest.fixture
+def qapp_y_ventana(carpeta, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from app import ventana as V
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(V.VentanaPrincipal, "buscar_actualizaciones", lambda self, silencioso=False: None)
+    v = V.VentanaPrincipal()
+    yield v
+    v.vigilante.stop()
+    v.close()
+    v.db.con.close()

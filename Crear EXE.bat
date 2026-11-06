@@ -6,7 +6,7 @@ if not exist ".venv\Scripts\python.exe" (
     pause & exit /b 1
 )
 ".venv\Scripts\python.exe" -m pip install pyinstaller
-".venv\Scripts\python.exe" herramientas\compilar.py
+".venv\Scripts\pyinstaller.exe" --noconfirm --clean InventarioEnfermeria.spec
 if errorlevel 1 ( pause & exit /b 1 )
 echo.
 echo Listo. El programa quedo en: dist\InventarioEnfermeria.exe

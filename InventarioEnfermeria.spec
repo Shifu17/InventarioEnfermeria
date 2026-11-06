@@ -1,14 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Genera un solo archivo: dist/InventarioEnfermeria.exe
-# Sin datos del inventario: se descargan del repositorio privado y se guardan en %LOCALAPPDATA%.
-# Compilar con herramientas/compilar.py (incrusta el código de acceso a los datos).
+# Sin datos del inventario: viven en %LOCALAPPDATA%\InventarioEnfermeria de cada computadora.
 
 a = Analysis(
     ['inventario.py'],
     pathex=[],
     binaries=[],
     datas=[('app/recursos', 'app/recursos')],
-    hiddenimports=['app._acceso'],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

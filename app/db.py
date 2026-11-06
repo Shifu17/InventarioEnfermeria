@@ -1,8 +1,7 @@
-"""Capa de datos: copia local en SQLite que se sincroniza con el inventario en línea.
+"""Capa de datos: SQLite en %LOCALAPPDATA%/InventarioEnfermeria de cada computadora.
 
-Cada registro (equipo o área) lleva una marca de tiempo `t` (milisegundos) de su último cambio, y los
-borrados se recuerdan en la tabla `borrados`. Así, al combinar los cambios de varias computadoras,
-gana siempre la versión más reciente de cada registro (ver app/sincronizacion.py).
+Para pasar el inventario a otra computadora se exporta/importa completo (ver app/respaldo.py).
+Cada equipo conserva un identificador (`uid`) y la marca de tiempo de su último cambio (`t`).
 """
 import json
 import os
@@ -116,7 +115,7 @@ def formato_costo(valor):
 
 # ------------------------------------------------------------------ esquema
 def conectar(path):
-    # timeout alto: el sincronizador escribe en la misma base desde otro hilo.
+    # timeout alto por si otra conexión está escribiendo en ese momento.
     con = sqlite3.connect(path, timeout=20)
     con.row_factory = sqlite3.Row
     return con
@@ -155,7 +154,7 @@ class Database:
         self.con = None
         self._abrir()
 
-    # ---- conexión / detección de cambios hechos por el sincronizador ----
+    # ---- conexión / detección de cambios hechos por otra conexión ----
     def _abrir(self):
         if self.con is not None:
             try:
@@ -177,7 +176,7 @@ class Database:
         self._version = self._data_version()
 
     def hubo_cambios_externos(self):
-        """True si otra conexión (el sincronizador) modificó la base desde la última lectura."""
+        """True si otra conexión modificó la base desde la última lectura."""
         v = self._data_version()
         if v != self._version:
             self._version = v
@@ -434,57 +433,3 @@ class Database:
             p = os.path.join(FOTOS_DIR, eq["foto"])
             if os.path.exists(p):
                 os.remove(p)
-
-
-# ------------------------------------------------------------------ documento sincronizable
-def exportar_doc(con):
-    """Todo el inventario como {"registros": {clave: registro}, "meta": {...}}.
-
-    Claves: "e:<uid>" para equipos y "a:<NOMBRE>" para áreas. Los borrados son {"borrado": True, "t": ...}.
-    """
-    reg = {}
-    for r in con.execute(f"SELECT uid, t, {', '.join(CAMPOS_DOC)} FROM equipos"):
-        d = dict(r)
-        reg["e:" + d.pop("uid")] = d
-    for r in con.execute("SELECT nombre, orden, t FROM areas"):
-        reg["a:" + r["nombre"]] = {"orden": r["orden"], "t": r["t"] or 0}
-    for r in con.execute("SELECT clave, t FROM borrados"):
-        if r["clave"] not in reg:
-            reg[r["clave"]] = {"borrado": True, "t": r["t"]}
-    m = con.execute("SELECT valor FROM meta WHERE clave='ultimo_folio'").fetchone()
-    return {"formato": 1, "registros": reg, "meta": {"ultimo_folio": int(m[0]) if m else 0}}
-
-
-def importar_doc(con, doc, actual=None):
-    """Aplica a la base local las diferencias entre `actual` (lo que hay) y `doc` (lo que debe haber)."""
-    actual = actual if actual is not None else exportar_doc(con)
-    nuevos, viejos = doc["registros"], actual["registros"]
-    cambios = {k: v for k, v in nuevos.items() if viejos.get(k) != v}
-    # Primero se liberan los folios de los equipos que cambian, para no chocar con el índice único.
-    for k, v in cambios.items():
-        if k.startswith("e:"):
-            con.execute("UPDATE equipos SET folio=NULL WHERE uid=?", (k[2:],))
-    for k, v in cambios.items():
-        tipo, clave = k[:2], k[2:]
-        if v.get("borrado"):
-            if tipo == "e:":
-                con.execute("DELETE FROM equipos WHERE uid=?", (clave,))
-            else:
-                con.execute("DELETE FROM areas WHERE nombre=?", (clave,))
-            con.execute("INSERT OR REPLACE INTO borrados(clave, t) VALUES(?,?)", (k, v["t"]))
-            continue
-        con.execute("DELETE FROM borrados WHERE clave=?", (k,))
-        if tipo == "a:":
-            con.execute("INSERT OR REPLACE INTO areas(nombre, orden, t) VALUES(?,?,?)", (clave, v.get("orden"), v["t"]))
-            continue
-        valores = [v.get(c) for c in CAMPOS_DOC] + [v["t"]]
-        if con.execute("SELECT 1 FROM equipos WHERE uid=?", (clave,)).fetchone():
-            con.execute(f"UPDATE equipos SET {', '.join(c + '=?' for c in CAMPOS_DOC)}, t=? WHERE uid=?",
-                        valores + [clave])
-        else:
-            con.execute(f"INSERT INTO equipos({', '.join(CAMPOS_DOC)}, t, uid) "
-                        f"VALUES({', '.join('?' * (len(CAMPOS_DOC) + 1))}, ?)", valores + [clave])
-    m = doc.get("meta", {}).get("ultimo_folio", 0)
-    if m != actual.get("meta", {}).get("ultimo_folio", 0):
-        con.execute("INSERT OR REPLACE INTO meta(clave, valor) VALUES('ultimo_folio', ?)", (str(m),))
-    return len(cambios)

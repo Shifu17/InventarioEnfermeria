@@ -7,16 +7,15 @@ INSTALAR (lo más fácil)
 - Guárdalo en una carpeta tuya (por ejemplo Documentos o el Escritorio) y ábrelo.
 - No necesita Python ni instalación.
 
-INVENTARIO EN LÍNEA
-- El inventario y sus fotos viven en un repositorio privado de GitHub
-  (Shifu17/InventarioEnfermeria-datos). Cada computadora lo descarga sola al abrir el
-  programa; no hay que configurar nada.
-- Los cambios se suben y bajan automáticamente cada pocos segundos. El estado aparece
-  abajo en la barra lateral; "Sincronizar ahora" lo fuerza.
-- Sin internet se sigue trabajando: los cambios se guardan en la computadora y se suben
-  al volver la conexión. Si dos computadoras cambian el mismo equipo, gana el cambio
-  más reciente.
-- Copia local: %LOCALAPPDATA%\InventarioEnfermeria (inventario.db y fotos\).
+PASAR EL INVENTARIO A OTRA COMPUTADORA
+- En la computadora que tiene el inventario: botón "Exportar BD". Se crea un archivo .zip
+  con toda la base de datos y las fotos.
+- Copia ese archivo a la otra computadora (USB, correo, Google Drive…).
+- En la otra computadora: botón "Importar BD" y elige el archivo. Reemplaza el inventario
+  de esa computadora; antes guarda una copia automática del anterior en la carpeta
+  de datos\respaldos.
+- El mismo archivo sirve como respaldo: guárdalo de vez en cuando en un lugar seguro.
+- Cada computadora guarda su inventario en %LOCALAPPDATA%\InventarioEnfermeria.
 
 ACTUALIZACIONES
 - Al abrir, el programa revisa en GitHub si hay una versión nueva y pregunta si quieres
@@ -46,7 +45,6 @@ DATOS Y RESPALDO
 PARA DESARROLLADORES
 - Ejecutar desde el código: "Iniciar Inventario.bat" (necesita Python 3.10+).
 - Crear el .exe local: "Crear EXE.bat" -> dist\InventarioEnfermeria.exe
-  Necesita el código de acceso a los datos en token_datos.txt (no se sube a git).
 - Publicar una versión nueva (los programas instalados la recibirán solos):
   1. Cambia VERSION en app\version.py (por ejemplo 1.2.0) y describe los cambios
      en NOTAS_VERSION.md.

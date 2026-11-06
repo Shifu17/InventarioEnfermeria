@@ -14,12 +14,10 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFile
 
 from . import estilos as E
 from . import actualizador
-from . import nube as NUBE
-from .credencial import token as token_datos
-from .sincronizacion import sincronizar
+from . import respaldo
 from . import db as BD
 from .db import AREA_BAJAS, Database, ESTADOS, formato_costo
-from .version import REPO_DATOS, VERSION
+from .version import VERSION
 from .iconos import icono, pixmap
 from .ficha import FichaEquipo
 
@@ -307,26 +305,8 @@ class _BuscadorActualizacion(QObject):
             self.listo.emit(None, str(ex) or ex.__class__.__name__)
 
 
-class _Sincronizador(QObject):
-    terminado = Signal(object, str)
-
-    def __init__(self, nube):
-        super().__init__()
-        self.nube = nube
-
-    def ejecutar(self):
-        try:
-            self.terminado.emit(sincronizar(self.nube), "")
-        except NUBE.AccesoDenegado as ex:
-            self.terminado.emit(None, f"acceso:{ex}")
-        except Exception as ex:
-            self.terminado.emit(None, str(ex) or ex.__class__.__name__)
-
-
 # ------------------------------------------------------------------ ventana
 class VentanaPrincipal(QMainWindow):
-    _pedir_sync = Signal()
-
     def __init__(self):
         super().__init__()
         self.db = Database()
@@ -366,7 +346,6 @@ class VentanaPrincipal(QMainWindow):
         self.vigilante = QTimer(self, interval=3000)
         self.vigilante.timeout.connect(self._revisar_cambios_externos)
         self.vigilante.start()
-        self._iniciar_sincronizacion()
         # Busca actualizaciones en GitHub poco después de abrir (sin estorbar el arranque).
         QTimer.singleShot(4000, lambda: self.buscar_actualizaciones(silencioso=True))
 
@@ -439,9 +418,14 @@ class VentanaPrincipal(QMainWindow):
         fila_areas.addWidget(self.btn_renombrar)
         caja.addLayout(fila_areas)
         caja.addWidget(boton("  Exportar a Excel", "excel", self.exportar_excel))
-        self.btn_sync = boton("  Sincronizar ahora", "nube", lambda: self.sincronizar_ahora(manual=True),
-                              "Subir y descargar los cambios del inventario en línea")
-        caja.addWidget(self.btn_sync)
+        fila_bd = QHBoxLayout()
+        fila_bd.setSpacing(8)
+        fila_bd.addWidget(boton("  Exportar BD", "respaldo", self.exportar_base,
+                                "Guardar todo el inventario (base de datos y fotos) en un archivo .zip\n"
+                                "para pasarlo a otra computadora o como respaldo"))
+        fila_bd.addWidget(boton("  Importar BD", "subir", self.importar_base,
+                                "Cargar en esta computadora un inventario exportado (.zip)"))
+        caja.addLayout(fila_bd)
         caja.addWidget(boton("  Abrir carpeta de datos", "carpeta", self.abrir_datos))
         self.btn_tema = boton("", "luna", self.alternar_tema)
         caja.addWidget(self.btn_tema)
@@ -452,6 +436,7 @@ class VentanaPrincipal(QMainWindow):
         pie.setContentsMargins(22, 10, 14, 0)
         self.lbl_datos = QLabel(styleSheet="color:#BFD0F0; font-size:8pt;")
         self.lbl_datos.setWordWrap(True)
+        self.lbl_datos.setToolTip(BD.DB_PATH)
         pie.addWidget(self.lbl_datos, 1)
         v.addLayout(pie)
         pie2 = QHBoxLayout()
@@ -663,8 +648,15 @@ class VentanaPrincipal(QMainWindow):
             partes.append(f"resultados para «{self.buscador.text().strip()}»")
         self.lbl_sub.setText("  ·  ".join(partes))
 
+        total = self.db.con.execute("SELECT COUNT(*) FROM equipos").fetchone()[0]
+        self.lbl_datos.setText(f"Base de datos de esta computadora · {total} equipo{'s' if total != 1 else ''}")
         if not filas:
-            self.vacio.setText("No se encontraron equipos.\nPrueba con otra palabra o número de inventario.")
+            if total == 0:
+                self.vacio.setText("Todavía no hay equipos en esta computadora.\n\n"
+                                   "Para traer el inventario de otra computadora, allá usa «Exportar BD»\n"
+                                   "y aquí «Importar BD» (abajo a la izquierda).")
+            else:
+                self.vacio.setText("No se encontraron equipos.\nPrueba con otra palabra o número de inventario.")
             self.pila.setCurrentIndex(2)
         else:
             self.pila.setCurrentIndex(self.grupo_vista.checkedId())
@@ -716,7 +708,6 @@ class VentanaPrincipal(QMainWindow):
 
     def _tras_cambio(self, area):
         self._cambios_pendientes = False
-        self._programar_sync()
         self.cargar_areas(self.area_actual)
         self.refrescar()
 
@@ -727,8 +718,7 @@ class VentanaPrincipal(QMainWindow):
             self.area_actual = BD.normalizar_area(nombre)
             self.cargar_areas()
             self.refrescar()
-            self._programar_sync()
-
+    
     def _menu_area(self, pos):
         item = self.lista_areas.itemAt(pos)
         if not item or item.data(Qt.UserRole) in (TODAS, AREA_BAJAS):
@@ -767,7 +757,6 @@ class VentanaPrincipal(QMainWindow):
         self.area_actual = self.db.renombrar_area(viejo, nuevo)
         self.cargar_areas()
         self.refrescar()
-        self._programar_sync()
 
     def exportar_excel(self):
         from .exportar import exportar
@@ -809,91 +798,68 @@ class VentanaPrincipal(QMainWindow):
         self.modelo.cargar(self.modelo.filas)       # recolorea estados y folios de la tabla
         self.vista_tarjetas.viewport().update()
 
-    # ---------- sincronización con el inventario en línea
-    def _iniciar_sincronizacion(self):
-        self._sync_en_curso = False
-        self._sync_pendiente = False
-        self._sync_manual = False
-        tk = token_datos()
-        self._nube = NUBE.Nube(REPO_DATOS, tk) if tk else None
-        if not self._nube:
-            self._estado_sync("Sin código de acceso: el inventario solo se guarda en esta computadora", error=True)
-            self.btn_sync.setEnabled(False)
+    # ---------- exportar / importar la base de datos completa
+    def exportar_base(self):
+        carpeta_ini = os.path.join(os.path.expanduser("~"), "Desktop")
+        ruta, _ = QFileDialog.getSaveFileName(self, "Exportar base de datos",
+                                              os.path.join(carpeta_ini, respaldo.nombre_sugerido()),
+                                              "Respaldo del inventario (*.zip)")
+        if not ruta:
             return
-        self._hilo_sync = QThread(self)
-        self._trab_sync = _Sincronizador(self._nube)
-        self._trab_sync.moveToThread(self._hilo_sync)
-        self._pedir_sync.connect(self._trab_sync.ejecutar)
-        self._trab_sync.terminado.connect(self._fin_sync)
-        self._hilo_sync.start()
-        self._reloj_sync = QTimer(self, interval=20000)       # revisa cambios en línea cada 20 s
-        self._reloj_sync.timeout.connect(self.sincronizar_ahora)
-        self._reloj_sync.start()
-        self._retraso_sync = QTimer(self, singleShot=True, interval=1500)
-        self._retraso_sync.timeout.connect(self.sincronizar_ahora)
-        self._estado_sync("Conectando con el inventario en línea…")
-        QTimer.singleShot(300, self.sincronizar_ahora)
-
-    def _programar_sync(self):
-        if getattr(self, "_nube", None):
-            self._retraso_sync.start()
-
-    def sincronizar_ahora(self, manual=False):
-        if not getattr(self, "_nube", None):
-            return
-        self._sync_manual = self._sync_manual or manual
-        if self._sync_en_curso:
-            self._sync_pendiente = True
-            return
-        self._sync_en_curso = True
-        self.btn_sync.setEnabled(False)
-        if manual:
-            self._estado_sync("Sincronizando…")
-        self._pedir_sync.emit()
-
-    def _fin_sync(self, resultado, error):
-        self._sync_en_curso = False
-        self.btn_sync.setEnabled(True)
-        manual, self._sync_manual = self._sync_manual, False
-        if error:
-            if error.startswith("acceso:"):
-                self._estado_sync("El código de acceso al inventario en línea no es válido", error=True)
-                if manual:
-                    QMessageBox.warning(self, "Inventario en línea", error[7:])
-            else:
-                self._estado_sync("Sin internet: los cambios se guardan aquí y se subirán después", error=True)
-                if manual:
-                    QMessageBox.warning(self, "Inventario en línea",
-                                        f"No se pudo sincronizar. Revisa la conexión a internet.\n\n{error}")
-        else:
-            from datetime import datetime
-            self._estado_sync(f"Inventario en línea sincronizado · {datetime.now():%H:%M}")
-            self._revisar_cambios_externos()
-        if self._sync_pendiente:
-            self._sync_pendiente = False
-            QTimer.singleShot(200, self.sincronizar_ahora)
-
-    def _estado_sync(self, texto, error=False):
-        self.lbl_datos.setText(("⚠  " if error else "☁  ") + texto)
-        self.lbl_datos.setStyleSheet(f"color:{'#FFD38A' if error else '#BFD0F0'}; font-size:8pt;")
-        self.lbl_datos.setToolTip(f"Copia local: {BD.DB_PATH}\nEn línea: github.com/{REPO_DATOS}")
-
-    def closeEvent(self, ev):
-        self.vigilante.stop()
-        if getattr(self, "_nube", None):
-            self._reloj_sync.stop()
-            self._retraso_sync.stop()
-            self._hilo_sync.quit()
-            self._hilo_sync.wait(20000)
-            # Último intento de subir lo pendiente antes de cerrar (rápido si no hay cambios).
-            self.setCursor(Qt.WaitCursor)
-            try:
-                self._nube.timeout = 10
-                sincronizar(self._nube)
-            except Exception:
-                pass
+        if not ruta.lower().endswith(".zip"):
+            ruta += ".zip"
+        self.setCursor(Qt.WaitCursor)
+        try:
+            n_eq, n_fotos = respaldo.exportar_base(ruta)
+        except Exception as ex:
             self.unsetCursor()
-        super().closeEvent(ev)
+            QMessageBox.critical(self, "Exportar base de datos", f"No se pudo exportar:\n{ex}")
+            return
+        self.unsetCursor()
+        QMessageBox.information(
+            self, "Base de datos exportada",
+            f"Se guardaron {n_eq} equipos y {n_fotos} fotos en:\n{ruta}\n\n"
+            "Para pasar el inventario a otra computadora, copia este archivo (USB, correo, Drive…) "
+            "y allá usa «Importar BD».")
+
+    def importar_base(self):
+        ruta, _ = QFileDialog.getOpenFileName(self, "Importar base de datos", os.path.expanduser("~"),
+                                              "Respaldo del inventario (*.zip)")
+        if not ruta:
+            return
+        try:
+            n = respaldo.revisar_archivo(ruta)
+        except respaldo.ArchivoNoValido as ex:
+            QMessageBox.warning(self, "Importar base de datos", str(ex))
+            return
+        actual = len(self.db.buscar())
+        r = QMessageBox.question(
+            self, "Importar base de datos",
+            f"El archivo trae {n} equipos.\n\n"
+            f"Se reemplazará el inventario de esta computadora ({actual} equipos) por el del archivo.\n"
+            "Antes se guardará automáticamente una copia del inventario actual.\n\n¿Continuar?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if r != QMessageBox.Yes:
+            return
+        self.setCursor(Qt.WaitCursor)
+        self.db.con.close()
+        try:
+            n, previo = respaldo.importar_base(ruta)
+        except Exception as ex:
+            self.db = Database()
+            self.unsetCursor()
+            QMessageBox.critical(self, "Importar base de datos", f"No se pudo importar:\n{ex}")
+            return
+        self.db = Database()
+        MINIS._cache.clear()
+        self.area_actual = TODAS
+        self.cargar_areas()
+        self.refrescar()
+        self.unsetCursor()
+        aviso = f"Se importaron {n} equipos."
+        if previo:
+            aviso += f"\n\nEl inventario anterior quedó respaldado en:\n{previo}"
+        QMessageBox.information(self, "Base de datos importada", aviso)
 
     def _revisar_cambios_externos(self):
         if getattr(self, "_ficha_abierta", False) or QApplication.activeModalWidget():
@@ -906,7 +872,7 @@ class VentanaPrincipal(QMainWindow):
         try:
             cambio = self.db.hubo_cambios_externos() or self._cambios_pendientes
         except Exception:
-            return   # base ocupada por el sincronizador: se reintenta en el siguiente ciclo
+            return
         if cambio:
             self._cambios_pendientes = False
             self.cargar_areas(self.area_actual)
@@ -925,7 +891,11 @@ class VentanaPrincipal(QMainWindow):
         self._trab_act = _BuscadorActualizacion()
         self._trab_act.moveToThread(self._hilo_act)
         self._hilo_act.started.connect(self._trab_act.ejecutar)
-        self._trab_act.listo.connect(lambda info, error: self._resultado_actualizacion(info, error, silencioso))
+        # La respuesta llega desde el hilo de consulta: se procesa en la ventana (hilo principal) con una
+        # conexión en cola. Conectarla a una lambda la ejecutaba en el hilo de consulta y cerraba el programa
+        # al mostrar cualquier aviso.
+        self._act_silencioso = silencioso
+        self._trab_act.listo.connect(self._al_responder_actualizacion, Qt.QueuedConnection)
         self._trab_act.listo.connect(self._hilo_act.quit)
         self._hilo_act.finished.connect(self._fin_hilo_act)
         self._hilo_act.start()
@@ -936,6 +906,9 @@ class VentanaPrincipal(QMainWindow):
         self._hilo_act = None
         self.btn_act.setEnabled(True)
         self.btn_act.setText("Buscar actualizaciones")
+
+    def _al_responder_actualizacion(self, info, error):
+        self._resultado_actualizacion(info, error, self._act_silencioso)
 
     def _resultado_actualizacion(self, info, error, silencioso):
         if error:

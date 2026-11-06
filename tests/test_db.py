@@ -118,7 +118,7 @@ def test_costo_guardado_y_total(base):
     assert BD.formato_costo(1234.5) == "$1,234.50" and BD.formato_costo(None) == ""
 
 
-# ---------------------------------------------------------------- recarga cuando el sincronizador escribe
+# ---------------------------------------------------------------- recarga cuando otra conexión escribe
 def test_detecta_cambios_de_otra_computadora(base, carpeta):
     assert base.hubo_cambios_externos() is False
     nuevo(base)                        # cambio propio: no cuenta como externo

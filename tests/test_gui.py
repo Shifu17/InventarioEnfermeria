@@ -122,3 +122,38 @@ def test_modo_oscuro(ventana, qapp):
     finally:
         ventana.alternar_tema()
     assert not E.es_oscuro() and BD.leer_config()["tema"] == "claro"
+
+
+@pytest.mark.parametrize("info,error", [(None, ""), (None, "sin internet"),
+                                        ({"version": "9.9.9", "notas": "", "url": "", "tamano": 0, "sha256": ""}, "")])
+def test_aviso_de_actualizacion_se_muestra_en_el_hilo_principal(qapp, carpeta, monkeypatch, info, error):
+    """Regresión: el aviso se creaba en el hilo de consulta y Windows cerraba el programa."""
+    import threading
+    import time
+    from PySide6.QtWidgets import QMessageBox
+    from app import actualizador
+    from app import ventana as V
+
+    def consulta():
+        if error:
+            raise OSError(error)
+        return info
+    monkeypatch.setattr(actualizador, "buscar_actualizacion", consulta)
+    hilos = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: hilos.append(threading.current_thread()))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: hilos.append(threading.current_thread()))
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: hilos.append(threading.current_thread()) or 0)
+    v = V.VentanaPrincipal()
+    try:
+        v.buscar_actualizaciones(silencioso=False)
+        fin = time.time() + 10
+        while (not hilos or v._hilo_act is not None) and time.time() < fin:
+            qapp.processEvents()
+            time.sleep(0.01)
+        assert hilos, "no se mostró ningún aviso"
+        assert all(h is threading.main_thread() for h in hilos)
+        assert v.btn_act.isEnabled()
+    finally:
+        v.vigilante.stop()
+        v.close()
+        v.db.con.close()

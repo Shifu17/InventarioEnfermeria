@@ -8,7 +8,7 @@
 # Inventario de Enfermería
 
 **Control del equipo de laboratorios y áreas clínicas de la Facultad de Enfermería y Nutrición (FAENUS · UAdeC).**
-Fotos, estados, costos y exportación a Excel, con el inventario sincronizado en línea entre computadoras.
+Fotos, estados, costos y exportación a Excel. El inventario se pasa entre computadoras con un solo archivo.
 
 <br>
 
@@ -38,7 +38,8 @@ Fotos, estados, costos y exportación a Excel, con el inventario sincronizado en
 
 1. Da clic en **[Descargar para Windows](https://github.com/Shifu17/InventarioEnfermeria/releases/latest/download/InventarioEnfermeria.exe)**.
 2. Mueve el archivo `InventarioEnfermeria.exe` a una carpeta tuya, por ejemplo **Documentos** o el **Escritorio**.
-3. Ábrelo con doble clic. **Listo:** el inventario se descarga solo y queda sincronizado con las demás computadoras.
+3. Ábrelo con doble clic.
+4. Para traer el inventario de otra computadora: allá da clic en **Exportar BD** y aquí en **Importar BD**.
 
 > [!NOTE]
 > Si Windows muestra *“Windows protegió su PC”*, da clic en **Más información → Ejecutar de todas formas**.
@@ -47,7 +48,7 @@ Fotos, estados, costos y exportación a Excel, con el inventario sincronizado en
 > [!TIP]
 > **¿Ya tenías una versión anterior?** Descarga esta una vez y reemplaza tu `.exe` viejo.
 > A partir de la 1.1.0 el programa **se actualiza solo**: al abrirlo te avisa si hay una versión nueva.
-> Las computadoras con la versión 1.1.0 reciben la 1.2.0 automáticamente.
+> Las computadoras con la versión 1.1.0 o 1.2.0 reciben la versión nueva automáticamente.
 
 ---
 
@@ -60,7 +61,7 @@ Fotos, estados, costos y exportación a Excel, con el inventario sincronizado en
 | 📷 **Fotos de cada equipo** | Arrastra una imagen a la ficha; clic para verla en grande. |
 | 💲 **Costos** | Costo por equipo, valor total por área y suma en el Excel. |
 | 🗑️ **Equipos dados de baja** | Se mueven solos a su propia área y regresan si se reactivan. |
-| ☁️ **Inventario en línea** | Todas las computadoras comparten el mismo inventario; se descarga y se actualiza solo, incluso después de trabajar sin internet. |
+| 💾 **Exportar / importar la base** | Todo el inventario con fotos en un solo `.zip` para pasarlo a otra computadora o guardarlo como respaldo. |
 | 📊 **Exportar a Excel** | Una hoja por área, con fotos, costos y totales. |
 | 🌙 **Modo oscuro** | Cámbialo con un botón; cada computadora recuerda su preferencia. |
 | ⬆️ **Actualizaciones automáticas** | El programa avisa cuando hay una versión nueva y se actualiza con un clic. |
@@ -87,18 +88,13 @@ Fotos, estados, costos y exportación a Excel, con el inventario sincronizado en
 ## ❓ Preguntas frecuentes
 
 <details>
-<summary><b>¿Cómo se comparte el inventario entre varias computadoras?</b></summary>
+<summary><b>¿Cómo paso el inventario a otra computadora?</b></summary>
 
-No hay que hacer nada: al abrir el programa en cualquier computadora con internet, descarga el inventario completo con
-sus fotos. Cada cambio se sube en segundos y las demás computadoras lo reciben solas. El estado de la conexión aparece
-abajo en la barra lateral; **Sincronizar ahora** lo fuerza.
-</details>
+1. En la computadora que tiene el inventario da clic en **Exportar BD**: se crea un archivo `.zip` con la base de datos y todas las fotos.
+2. Copia ese archivo a la otra computadora (USB, correo, Google Drive…).
+3. En la otra computadora da clic en **Importar BD** y elige el archivo.
 
-<details>
-<summary><b>¿Y si no hay internet?</b></summary>
-
-Puedes seguir trabajando normalmente. Los cambios se guardan en la computadora y se suben en cuanto vuelve la conexión.
-Si dos computadoras cambiaron cosas distintas se conservan las dos; si cambiaron el mismo equipo, gana el cambio más reciente.
+Importar reemplaza el inventario de esa computadora, pero antes guarda automáticamente una copia del anterior.
 </details>
 
 <details>
@@ -111,16 +107,16 @@ Además se guarda una copia del programa anterior como `InventarioEnfermeria.exe
 <details>
 <summary><b>¿Dónde están mis datos y cómo hago un respaldo?</b></summary>
 
-El inventario está guardado en línea (con historial de cada cambio) y además cada computadora tiene una copia local.
-**Abrir carpeta de datos** muestra esa copia: `inventario.db` y la carpeta `fotos`. Puedes copiarla a una memoria USB
-como respaldo extra.
+Da clic en **Exportar BD**: el archivo `.zip` que se crea es un respaldo completo (base de datos y fotos).
+Guárdalo de vez en cuando en una memoria USB o en la nube. **Abrir carpeta de datos** muestra dónde vive el inventario
+en esa computadora.
 </details>
 
 <details>
 <summary><b>¿Dónde se guardan los datos? ¿Están en este repositorio?</b></summary>
 
-No. Este repositorio público solo contiene el programa. El inventario y las fotos se guardan en un repositorio
-**privado** aparte, al que solo accede el programa.
+No. Este repositorio público solo contiene el programa. El inventario y las fotos se guardan únicamente en cada
+computadora; el programa no los envía a ningún servidor. Solo se conecta a GitHub para revisar si hay una versión nueva.
 </details>
 
 ---
@@ -138,7 +134,6 @@ Hecho con Python 3.12 y PySide6 (Qt).
 .venv\Scripts\python -m pytest
 
 :: Compilar el .exe  ->  dist\InventarioEnfermeria.exe
-:: (necesita el código de acceso a los datos en token_datos.txt, que nunca se sube)
 "Crear EXE.bat"
 ```
 
@@ -152,7 +147,7 @@ Hecho con Python 3.12 y PySide6 (Qt).
 
 | Carpeta | Contenido |
 |---|---|
-| `app/` | Interfaz (`ventana.py`, `ficha.py`), datos (`db.py`), sincronización (`sincronizacion.py`, `nube.py`), actualizador, estilos |
+| `app/` | Interfaz (`ventana.py`, `ficha.py`), datos (`db.py`), exportar/importar (`respaldo.py`), actualizador, estilos |
 | `tests/` | Pruebas automáticas |
 | `herramientas/` | Importación inicial desde Excel |
 </details>
