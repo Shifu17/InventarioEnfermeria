@@ -10,7 +10,8 @@ import urllib.request
 
 from .version import NOMBRE_EXE, REPO, VERSION
 
-API = f"https://api.github.com/repos/{REPO}/releases/latest"
+# INVENTARIO_API_ACTUALIZACION solo se usa en pruebas (apunta a un servidor local).
+API = os.environ.get("INVENTARIO_API_ACTUALIZACION") or f"https://api.github.com/repos/{REPO}/releases/latest"
 AGENTE = f"InventarioEnfermeria/{VERSION}"
 
 
@@ -82,6 +83,18 @@ def puede_actualizarse():
     return getattr(sys, "frozen", False)
 
 
+def entorno_limpio():
+    """Variables de entorno para abrir otra copia del .exe como un programa nuevo.
+
+    PyInstaller deja variables internas (_PYI_*, _MEIPASS2) que harían creer al .exe nuevo que es un
+    subproceso del actual: buscaría la carpeta temporal del programa viejo (ya borrada) y no abriría.
+    """
+    entorno = {k: v for k, v in os.environ.items()
+               if not k.upper().startswith(("_PYI_", "_MEIPASS")) and k.upper() != "PYINSTALLER_RESET_ENVIRONMENT"}
+    entorno["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return entorno
+
+
 def instalar_y_reiniciar(nuevo_exe):
     """Reemplaza el .exe en uso por el descargado y lo vuelve a abrir.
 
@@ -121,7 +134,8 @@ start "" "%INV_ACTUAL%"
 """
     with open(script, "w", encoding="ascii", newline="\r\n") as f:
         f.write(contenido)
-    entorno = dict(os.environ, INV_ACTUAL=actual, INV_NUEVO=os.path.abspath(nuevo_exe))
+    entorno = entorno_limpio()
+    entorno.update(INV_ACTUAL=actual, INV_NUEVO=os.path.abspath(nuevo_exe))
     flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     try:
         # Que el script sobreviva al cierre del programa aunque Windows lo haya agrupado en un "job".

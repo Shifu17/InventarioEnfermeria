@@ -152,3 +152,14 @@ def test_versiones():
     assert es_mas_nueva("v1.10.0", "1.9.9")
     assert not es_mas_nueva("v1.1.0", "1.1.0")
     assert not es_mas_nueva("v1.0.9", "1.1.0")
+
+
+def test_entorno_limpio_para_reabrir(monkeypatch):
+    from app.actualizador import entorno_limpio
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", r"C:\temp\_MEI123")
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+    monkeypatch.setenv("_MEIPASS2", r"C:\temp\_MEI123")
+    monkeypatch.setenv("OTRA_VARIABLE", "se conserva")
+    e = entorno_limpio()
+    assert not any(k.upper().startswith(("_PYI_", "_MEIPASS")) for k in e)
+    assert e["PYINSTALLER_RESET_ENVIRONMENT"] == "1" and e["OTRA_VARIABLE"] == "se conserva"
