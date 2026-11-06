@@ -1,0 +1,30 @@
+INVENTARIO DE ENFERMERÍA · FAENUS UAdeC
+=======================================
+
+CÓMO ABRIRLA (Windows)
+1. Instala Python 3.10 o superior desde https://www.python.org/downloads/
+   (en el instalador marca "Add python.exe to PATH").
+2. Doble clic en "Iniciar Inventario.bat".
+   La primera vez tarda 1-2 minutos porque instala lo necesario; después abre al instante.
+
+CONVERTIR EN .EXE (opcional)
+- Después de abrirla una vez, doble clic en "Crear EXE.bat".
+- El programa queda en dist\InventarioEnfermeria\InventarioEnfermeria.exe
+  (esa carpeta ya no necesita Python y se puede copiar a otra computadora).
+
+USO
+- Buscar: escribe nombre, No. de inventario, marca, modelo o serie (Ctrl+F). Enter abre el equipo si hay un solo resultado.
+- Áreas: barra lateral izquierda. "Nueva área" agrega una.
+- Agregar equipo: botón azul "Agregar equipo" (Ctrl+N).
+- Editar: doble clic sobre una tarjeta o fila.
+- Foto: "Cambiar foto" o arrastra la imagen al recuadro. Clic sobre la foto para verla en grande.
+- Vista de tarjetas o de tabla: botones junto al buscador.
+- Exportar a Excel: genera un .xlsx con una hoja por área e incluye las fotos.
+
+DATOS
+- Todo se guarda en la carpeta "datos": inventario.db (base de datos) y fotos\.
+- Para respaldar, copia la carpeta "datos" completa.
+
+NOTA
+- herramientas\migrar_excel.py vuelve a importar el Excel original y REEMPLAZA la base actual.
+  Solo úsalo si quieres empezar de nuevo desde el Excel.

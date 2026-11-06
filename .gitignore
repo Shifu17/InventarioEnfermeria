@@ -1,0 +1,17 @@
+# Datos del inventario (nunca se suben: el repositorio es público)
+datos/
+datos_iniciales/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+
+# Entorno y compilación
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec.bak
+.pytest_cache/
