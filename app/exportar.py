@@ -8,12 +8,15 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from PIL import Image
 
-from .db import FOTOS_DIR
+from . import db as BD
 
 COLS = [("folio", "#", 7), ("no_inventario", "No. DE INVENTARIO", 18), ("foto", "FOTO", 22), ("descripcion", "DESCRIPCIÓN", 40),
         ("observaciones", "OBSERVACIONES", 30), ("marca", "MARCA", 16), ("modelo", "MODELO", 14),
-        ("serie", "SERIE", 14), ("estado", "ESTADO", 18), ("practicas", "PRÁCTICAS POSIBLES", 60),
+        ("serie", "SERIE", 14), ("estado", "ESTADO", 18), ("costo", "COSTO (MXN)", 16), ("practicas", "PRÁCTICAS POSIBLES", 60),
         ("resumen", "RESUMEN", 45), ("comentarios", "COMENTARIOS", 35)]
+
+FORMATO_MONEDA = '"$"#,##0.00'
+COL_COSTO = [c for c, _, _ in COLS].index("costo") + 1
 
 
 def exportar(db, ruta):
@@ -52,9 +55,11 @@ def exportar(db, ruta):
                 cel = ws.cell(r, c, int(v) if campo == "no_inventario" and str(v).isdigit() else v)
                 cel.alignment = Alignment(vertical="top", wrap_text=True)
                 cel.border = borde
+                if campo == "costo":
+                    cel.number_format = FORMATO_MONEDA
             ws.cell(r, 3).border = borde
-            if f.get("foto") and os.path.exists(os.path.join(FOTOS_DIR, f["foto"])):
-                im = Image.open(os.path.join(FOTOS_DIR, f["foto"]))
+            if f.get("foto") and os.path.exists(BD.ruta_foto(f["foto"])):
+                im = Image.open(BD.ruta_foto(f["foto"]))
                 im.thumbnail((300, 300))
                 p = os.path.join(tmp, f"{f['id']}.png")
                 im.save(p)
@@ -63,6 +68,16 @@ def exportar(db, ruta):
                 xi.width, xi.height = int(xi.width * esc), int(xi.height * esc)
                 ws.add_image(xi, f"C{r}")
             total += 1
+        if filas:
+            # Renglón de total del área
+            r = len(filas) + 2
+            et = ws.cell(r, COL_COSTO - 1, "TOTAL")
+            et.font = Font(bold=True)
+            et.alignment = Alignment(horizontal="right")
+            letra = ws.cell(2, COL_COSTO).column_letter
+            tot = ws.cell(r, COL_COSTO, f"=SUM({letra}2:{letra}{r - 1})")
+            tot.font = Font(bold=True)
+            tot.number_format = FORMATO_MONEDA
     if not wb.sheetnames:
         wb.create_sheet("INVENTARIO")
     wb.save(ruta)

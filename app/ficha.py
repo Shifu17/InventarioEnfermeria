@@ -5,13 +5,15 @@ import weakref
 
 from PIL import Image, ImageOps
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPixmap, QGuiApplication, QFontMetricsF, QIntValidator
+from PySide6.QtGui import QPixmap, QGuiApplication, QFontMetricsF, QIntValidator, QRegularExpressionValidator
+from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from . import estilos as E
-from .db import ESTADOS, FOTOS_DIR
+from . import db as BD
+from .db import AREA_BAJAS, ESTADO_BAJA, ESTADOS, a_costo
 from .iconos import icono
 
 EXT_IMG = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".jfif")
@@ -23,7 +25,7 @@ def guardar_imagen(origen, eid):
     img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((1600, 1600))
     nombre = f"equipo_{eid}_{int(time.time())}.jpg"
-    img.save(os.path.join(FOTOS_DIR, nombre), "JPEG", quality=90)
+    img.save(os.path.join(BD.FOTOS_DIR, nombre), "JPEG", quality=90)
     return nombre
 
 
@@ -49,7 +51,7 @@ class VisorFoto(QDialog):
         self.pm = QPixmap(ruta)
         scr = QGuiApplication.primaryScreen().availableGeometry()
         self.resize(int(scr.width() * 0.75), int(scr.height() * 0.85))
-        self.setStyleSheet("background:#0F1B33;")
+        self.setStyleSheet("background:#0B1220;")
         v = QVBoxLayout(self)
         v.setContentsMargins(10, 10, 10, 10)
         self.lbl = QLabel(alignment=Qt.AlignCenter)
@@ -140,7 +142,7 @@ class FichaEquipo(QDialog):
 
         # banda superior
         banda = QFrame()
-        banda.setStyleSheet(f"background:{E.AZUL};")
+        banda.setStyleSheet(f"background:{E.LATERAL};")
         hb = QHBoxLayout(banda)
         hb.setContentsMargins(26, 16, 26, 16)
         cruz = QLabel()
@@ -199,11 +201,18 @@ class FichaEquipo(QDialog):
         self.c_area = QComboBox()
         self.c_area.setEditable(True)
         self.c_area.addItems(db.areas())
+        self.c_area.lineEdit().textEdited.connect(self._area_en_mayusculas)
+        self._area_antes_de_baja = None
         self.c_estado = QComboBox()
         self.c_estado.setEditable(True)
         for e in ESTADOS:
             self.c_estado.addItem(e if e else "(Sin especificar)", e)
         self.e_marca, self.e_modelo, self.e_serie = QLineEdit(), QLineEdit(), QLineEdit()
+        self.e_costo = QLineEdit()
+        self.e_costo.setPlaceholderText("$ 0.00")
+        self.e_costo.setToolTip("Costo del equipo en pesos (MXN)")
+        self.e_costo.setValidator(QRegularExpressionValidator(QRegularExpression(r"\$?\s*[\d,]*\.?\d{0,2}"), self))
+        self.e_costo.editingFinished.connect(self._formatear_costo)
 
         g.addWidget(etiqueta("Folio único"), 0, 0)
         g.addWidget(etiqueta("No. de inventario"), 0, 1)
@@ -213,15 +222,20 @@ class FichaEquipo(QDialog):
         g.addWidget(self.e_inv, 1, 1)
         g.addWidget(self.c_area, 1, 2)
         g.addWidget(self.c_estado, 1, 3)
-        g.addWidget(etiqueta("Marca"), 2, 0, 1, 2)
+        g.addWidget(etiqueta("Costo (MXN)"), 2, 0)
+        g.addWidget(etiqueta("Marca"), 2, 1)
         g.addWidget(etiqueta("Modelo"), 2, 2)
         g.addWidget(etiqueta("Serie"), 2, 3)
-        g.addWidget(self.e_marca, 3, 0, 1, 2)
+        g.addWidget(self.e_costo, 3, 0)
+        g.addWidget(self.e_marca, 3, 1)
         g.addWidget(self.e_modelo, 3, 2)
         g.addWidget(self.e_serie, 3, 3)
-        g.setColumnStretch(0, 1)
-        for c in (1, 2, 3):
-            g.setColumnStretch(c, 2)
+        g.setColumnStretch(0, 3)
+        g.setColumnStretch(1, 4)
+        g.setColumnStretch(2, 5)
+        g.setColumnStretch(3, 5)
+        self.s_folio.setMinimumWidth(110)
+        self.e_costo.setMinimumWidth(110)
         g.setRowMinimumHeight(2, 26)
         cold.addLayout(g)
 
@@ -281,6 +295,7 @@ class FichaEquipo(QDialog):
         self.e_marca.setText(d.get("marca", ""))
         self.e_modelo.setText(d.get("modelo", ""))
         self.e_serie.setText(d.get("serie", ""))
+        self.e_costo.setText(BD.formato_costo(d.get("costo")))
         self.t_desc.setPlainText(d.get("descripcion", ""))
         self.t_obs.setPlainText(d.get("observaciones", ""))
         self.t_prac.setPlainText(d.get("practicas", ""))
@@ -289,6 +304,8 @@ class FichaEquipo(QDialog):
         self._actualizar_cabecera()
         self.e_inv.textChanged.connect(self._actualizar_cabecera)
         self.s_folio.textChanged.connect(self._actualizar_cabecera)
+        self.c_estado.currentTextChanged.connect(self._estado_cambiado)
+        self._estado_cambiado(self.c_estado.currentText())
         self._mostrar_foto()
 
     def _actualizar_cabecera(self):
@@ -298,12 +315,38 @@ class FichaEquipo(QDialog):
         else:
             self.lbl_cab.setText(f"Nuevo equipo #{self.s_folio.text()}{('   ·   No. ' + no) if no else ''}")
 
+    def _area_en_mayusculas(self, texto):
+        if texto != texto.upper():
+            le = self.c_area.lineEdit()
+            pos = le.cursorPosition()
+            le.setText(texto.upper())
+            le.setCursorPosition(pos)
+
+    def _estado_cambiado(self, texto):
+        """Al marcar «Dado de baja» el equipo pasa solo al área de equipos dados de baja."""
+        baja = texto.strip().upper() == ESTADO_BAJA
+        actual = self.c_area.currentText().strip().upper()
+        if baja and actual != AREA_BAJAS:
+            self._area_antes_de_baja = actual or self._area_antes_de_baja
+            self.c_area.setCurrentText(AREA_BAJAS)
+        elif not baja and actual == AREA_BAJAS:
+            anterior = self._area_antes_de_baja or self.datos.get("area_anterior") or ""
+            self.c_area.setCurrentText(anterior)
+        self.c_area.setEnabled(not baja)
+        self.c_area.lineEdit().setCursorPosition(0)
+        self.c_area.setToolTip("Los equipos dados de baja se guardan automáticamente en el área "
+                               f"«{AREA_BAJAS}»." if baja else "")
+
+    def _formatear_costo(self):
+        v = a_costo(self.e_costo.text())
+        self.e_costo.setText(BD.formato_costo(v))
+
     def _ruta_foto_actual(self):
         if self.foto_nueva:
             return self.foto_nueva
         if self.quitar_foto or not self.datos.get("foto"):
             return None
-        return os.path.join(FOTOS_DIR, self.datos["foto"])
+        return BD.ruta_foto(self.datos["foto"])
 
     def _mostrar_foto(self):
         ruta = self._ruta_foto_actual()
@@ -363,12 +406,16 @@ class FichaEquipo(QDialog):
             "marca": self.e_marca.text().strip(),
             "modelo": self.e_modelo.text().strip(),
             "serie": self.e_serie.text().strip(),
+            "costo": a_costo(self.e_costo.text()),
             "descripcion": self.t_desc.toPlainText().strip(),
             "observaciones": self.t_obs.toPlainText().strip(),
             "practicas": self.t_prac.toPlainText().strip(),
             "resumen": self.t_res.toPlainText().strip(),
             "comentarios": self.t_com.toPlainText().strip(),
         }
+        if datos["estado"] == ESTADO_BAJA and datos["area"] == AREA_BAJAS and self._area_antes_de_baja:
+            # Se manda el área de origen: la base lo mueve a bajas y recuerda de dónde venía.
+            datos["area"] = self._area_antes_de_baja
         if not datos["no_inventario"] and not datos["descripcion"]:
             QMessageBox.warning(self, "Faltan datos", "Escribe al menos el número de inventario o la descripción.")
             return
@@ -411,13 +458,13 @@ class FichaEquipo(QDialog):
             self.db.actualizar_equipo(self.eid, {"foto": ""})
             self._borrar_archivo(foto_vieja)
 
-        self.area_final = datos["area"]
+        self.area_final = (self.db.obtener(self.eid) or {}).get("area", datos["area"])
         self.accept()
 
     @staticmethod
     def _borrar_archivo(nombre):
         if nombre:
-            p = os.path.join(FOTOS_DIR, nombre)
+            p = BD.ruta_foto(nombre)
             if os.path.exists(p):
                 try:
                     os.remove(p)

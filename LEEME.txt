@@ -1,30 +1,56 @@
 INVENTARIO DE ENFERMERÍA · FAENUS UAdeC
 =======================================
 
-CÓMO ABRIRLA (Windows)
-1. Instala Python 3.10 o superior desde https://www.python.org/downloads/
-   (en el instalador marca "Add python.exe to PATH").
-2. Doble clic en "Iniciar Inventario.bat".
-   La primera vez tarda 1-2 minutos porque instala lo necesario; después abre al instante.
+INSTALAR (lo más fácil)
+- Descarga InventarioEnfermeria.exe de la última versión:
+  https://github.com/Shifu17/InventarioEnfermeria/releases/latest
+- Guárdalo en una carpeta tuya (por ejemplo Documentos o el Escritorio) y ábrelo.
+- No necesita Python ni instalación.
 
-CONVERTIR EN .EXE (opcional)
-- Después de abrirla una vez, doble clic en "Crear EXE.bat".
-- El programa queda en dist\InventarioEnfermeria\InventarioEnfermeria.exe
-  (esa carpeta ya no necesita Python y se puede copiar a otra computadora).
+BASE DE DATOS COMPARTIDA
+- La primera vez el programa pregunta dónde guardar el inventario:
+  · "Usar carpeta compartida": elige una carpeta de red, de OneDrive o de Google Drive
+    que vean todas las computadoras. Si está vacía, ofrece copiar ahí tu inventario actual.
+  · "Solo en esta computadora": se guarda en %LOCALAPPDATA%\InventarioEnfermeria.
+- Después se abre sola cada vez. Cada pocos segundos revisa si otra computadora guardó
+  cambios y actualiza la pantalla.
+- Para cambiarla: botón "Base de datos compartida" en la barra lateral.
+- Recomendación: con OneDrive / Google Drive evita que dos personas editen exactamente
+  al mismo tiempo; si la sincronización choca, el servicio puede crear una copia en
+  conflicto del archivo inventario.db. Una carpeta de red no tiene ese problema.
+
+ACTUALIZACIONES
+- Al abrir, el programa revisa en GitHub si hay una versión nueva y pregunta si quieres
+  actualizar. También puedes usar "Buscar actualizaciones" (abajo en la barra lateral).
+- Al actualizar se reemplaza el .exe y se abre de nuevo. Tus datos no se tocan.
+  (Se guarda una copia del .exe anterior como InventarioEnfermeria.exe.anterior.)
 
 USO
-- Buscar: escribe nombre, No. de inventario, marca, modelo o serie (Ctrl+F). Enter abre el equipo si hay un solo resultado.
-- Áreas: barra lateral izquierda. "Nueva área" agrega una.
-- Agregar equipo: botón azul "Agregar equipo" (Ctrl+N).
-- Editar: doble clic sobre una tarjeta o fila.
+- Buscar: nombre, # folio, No. de inventario, marca, modelo o serie (Ctrl+F).
+  Varios folios: 1,2,3   ·   Rango: 1-10. Enter abre el equipo si hay un solo resultado.
+- Áreas: barra lateral izquierda. "Nueva área" agrega una; "Renombrar", doble clic o
+  clic derecho cambian el nombre (si ya existe otra con ese nombre se pueden unir).
+- Equipos dados de baja: al poner el estado "Dado de baja" el equipo pasa solo al área
+  "EQUIPOS DADOS DE BAJA". Si cambias el estado, regresa a su área original.
+- Costo: campo "Costo (MXN)" en la ficha del equipo. El total aparece arriba del listado
+  y en el Excel exportado.
+- Agregar equipo: botón azul "Agregar equipo" (Ctrl+N). Editar: clic sobre una tarjeta o fila.
 - Foto: "Cambiar foto" o arrastra la imagen al recuadro. Clic sobre la foto para verla en grande.
-- Vista de tarjetas o de tabla: botones junto al buscador.
-- Exportar a Excel: genera un .xlsx con una hoja por área e incluye las fotos.
+- Exportar a Excel: una hoja por área, con fotos, costos y total por área.
+- Modo oscuro: botón "Modo oscuro" / "Modo claro" en la barra lateral (se recuerda en cada PC).
 
-DATOS
-- Todo se guarda en la carpeta "datos": inventario.db (base de datos) y fotos\.
-- Para respaldar, copia la carpeta "datos" completa.
+DATOS Y RESPALDO
+- En la carpeta de datos están inventario.db (base de datos) y fotos\.
+  "Abrir carpeta de datos" la muestra. Para respaldar, copia esa carpeta completa.
+- Los errores inesperados se anotan en %LOCALAPPDATA%\InventarioEnfermeria\errores.log.
 
-NOTA
+PARA DESARROLLADORES
+- Ejecutar desde el código: "Iniciar Inventario.bat" (necesita Python 3.10+).
+- Crear el .exe local: "Crear EXE.bat" -> dist\InventarioEnfermeria.exe
+- Publicar una versión nueva (los programas instalados la recibirán solos):
+  1. Cambia VERSION en app\version.py (por ejemplo 1.2.0) y describe los cambios
+     en NOTAS_VERSION.md.
+  2. git commit -am "Versión 1.2.0" && git tag v1.2.0 && git push --follow-tags
+  3. GitHub Actions prueba, compila y publica el .exe en Releases automáticamente.
+- Pruebas: .venv\Scripts\python -m pytest
 - herramientas\migrar_excel.py vuelve a importar el Excel original y REEMPLAZA la base actual.
-  Solo úsalo si quieres empezar de nuevo desde el Excel.
