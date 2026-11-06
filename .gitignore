@@ -15,3 +15,7 @@ build/
 dist/
 *.spec.bak
 .pytest_cache/
+
+# Código de acceso a los datos (se genera al compilar; nunca se sube)
+app/_acceso.py
+token_datos.txt

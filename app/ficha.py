@@ -1,6 +1,7 @@
 """Ficha de equipo: ver, editar, agregar, cambiar foto y eliminar."""
 import os
 import time
+import uuid
 import weakref
 
 from PIL import Image, ImageOps
@@ -24,7 +25,8 @@ def guardar_imagen(origen, eid):
     img = Image.open(origen)
     img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((1600, 1600))
-    nombre = f"equipo_{eid}_{int(time.time())}.jpg"
+    # Nombre único entre computadoras (las fotos se comparten en el inventario en línea).
+    nombre = f"equipo_{eid}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
     img.save(os.path.join(BD.FOTOS_DIR, nombre), "JPEG", quality=90)
     return nombre
 

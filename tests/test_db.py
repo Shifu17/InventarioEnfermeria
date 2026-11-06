@@ -118,7 +118,7 @@ def test_costo_guardado_y_total(base):
     assert BD.formato_costo(1234.5) == "$1,234.50" and BD.formato_costo(None) == ""
 
 
-# ---------------------------------------------------------------- base compartida: recarga automática
+# ---------------------------------------------------------------- recarga cuando el sincronizador escribe
 def test_detecta_cambios_de_otra_computadora(base, carpeta):
     assert base.hubo_cambios_externos() is False
     nuevo(base)                        # cambio propio: no cuenta como externo
@@ -131,25 +131,8 @@ def test_detecta_cambios_de_otra_computadora(base, carpeta):
     assert base.hubo_cambios_externos() is False
 
 
-def test_copiar_datos_a_carpeta_compartida(base, carpeta, tmp_path_factory):
-    nuevo(base)
-    (carpeta / "fotos" / "equipo_1.jpg").write_bytes(b"x")
-    destino = tmp_path_factory.mktemp("compartida")
-    BD.copiar_datos(str(carpeta), str(destino))
-    con = sqlite3.connect(destino / "inventario.db")
-    assert con.execute("SELECT COUNT(*) FROM equipos").fetchone()[0] == 1
-    con.close()
-    assert (destino / "fotos" / "equipo_1.jpg").exists()
 
 
-def test_config_carpeta(tmp_path):
-    assert BD.carpeta_configurada() == BD.CARPETA_LOCAL
-    BD.guardar_config(carpeta_datos=str(tmp_path))
-    try:
-        assert BD.configurado()
-        assert BD.carpeta_configurada() == str(tmp_path)
-    finally:
-        BD.guardar_config(carpeta_datos="")
 
 
 # ---------------------------------------------------------------- búsqueda (comportamiento previo intacto)

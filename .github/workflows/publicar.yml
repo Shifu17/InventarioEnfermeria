@@ -40,7 +40,9 @@ jobs:
         run: python -m pytest -q
 
       - name: Compilar .exe
-        run: pyinstaller --noconfirm --clean InventarioEnfermeria.spec
+        env:
+          INVENTARIO_TOKEN: ${{ secrets.INVENTARIO_TOKEN }}   # código de acceso al repositorio de datos
+        run: python herramientas/compilar.py
 
       - name: Publicar release
         if: startsWith(github.ref, 'refs/tags/')

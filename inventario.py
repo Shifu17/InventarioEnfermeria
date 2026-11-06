@@ -53,14 +53,6 @@ def main():
     app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(estilos.aplicar_tema(leer_config().get("tema", "claro")))
     app.setWindowIcon(QIcon(os.path.join(RECURSOS, "icono.ico")))
-    # Base de datos: la primera vez se elige la carpeta (compartida o solo esta PC);
-    # después se abre sola en cada arranque.
-    from app import carpeta
-    from app import db as BD
-    if not BD.configurado():
-        carpeta.configurar_primera_vez()
-    elif not carpeta.verificar_carpeta():
-        sys.exit(0)
     v = VentanaPrincipal()
     v.showMaximized()
     sys.exit(app.exec())

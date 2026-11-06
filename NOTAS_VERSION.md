@@ -1,11 +1,10 @@
-## Novedades de la versión 1.1.0
+## Novedades de la versión 1.2.0
 
-- **Base de datos compartida:** el inventario puede guardarse en una carpeta compartida (red, OneDrive o Google Drive). Se abre sola en cada arranque y la pantalla se actualiza automáticamente cuando otra computadora guarda cambios.
-- **Equipos dados de baja:** al marcar un equipo como «Dado de baja» se mueve solo al área **EQUIPOS DADOS DE BAJA**. Si se reactiva, regresa a su área original.
-- **Costos:** nuevo campo «Costo (MXN)» en cada equipo. Se ve en las tarjetas, en la tabla, en el total del área y en el Excel exportado (con suma por área).
-- **Renombrar áreas:** doble clic, clic derecho o el botón «Renombrar». Si el nombre ya existe, se pueden unir las dos áreas.
-- Todas las áreas en MAYÚSCULAS y con letra más pequeña en la barra lateral.
-- Nombre de la facultad más pequeño y logos más separados.
-- Flecha visible en todas las listas desplegables.
-- **Modo oscuro:** botón «Modo oscuro» en la barra lateral; cada computadora recuerda su preferencia.
-- **Actualizaciones automáticas:** el programa avisa cuando hay una versión nueva y se actualiza con un clic.
+- **Inventario en línea:** el inventario (con sus fotos) ya no depende de una carpeta compartida. Cada computadora lo **descarga sola** al abrir el programa y los cambios se suben y bajan automáticamente cada pocos segundos.
+- **Funciona sin internet:** los cambios se guardan en la computadora y se suben en cuanto vuelve la conexión. Si dos computadoras cambian cosas distintas, se conservan las dos; si cambian el mismo equipo, gana el cambio más reciente.
+- Nuevo botón **«Sincronizar ahora»** e indicador del estado de la conexión en la barra lateral.
+- Se carga el inventario existente (77 equipos con sus fotos).
+- Se quitó la opción de carpeta compartida.
+
+### Versión 1.1.0
+- Equipos dados de baja en su propia área, campo de costo, renombrar áreas, áreas en mayúsculas, modo oscuro, flecha en las listas y actualizaciones automáticas.

@@ -5,6 +5,7 @@ import tempfile
 # Configuración aislada: nunca toca los datos reales de la computadora.
 os.environ["INVENTARIO_CARPETA_LOCAL"] = tempfile.mkdtemp(prefix="inv_test_local_")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["INVENTARIO_SIN_NUBE"] = "1"   # las pruebas nunca se conectan a GitHub
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402

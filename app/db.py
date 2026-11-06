@@ -1,10 +1,16 @@
-"""Capa de datos: SQLite en una carpeta local o compartida (red, OneDrive, Google Drive…)."""
+"""Capa de datos: copia local en SQLite que se sincroniza con el inventario en línea.
+
+Cada registro (equipo o área) lleva una marca de tiempo `t` (milisegundos) de su último cambio, y los
+borrados se recuerdan en la tabla `borrados`. Así, al combinar los cambios de varias computadoras,
+gana siempre la versión más reciente de cada registro (ver app/sincronizacion.py).
+"""
 import json
 import os
 import re
-import shutil
 import sqlite3
 import sys
+import time
+import uuid
 from datetime import datetime
 
 CONGELADO = getattr(sys, "frozen", False)
@@ -14,7 +20,7 @@ ESTADO_BAJA = "DADO DE BAJA"
 
 
 def _carpeta_local():
-    # En el .exe la configuración vive en %LOCALAPPDATA%; desde el código, en la carpeta del proyecto.
+    # En el .exe los datos viven en %LOCALAPPDATA%; desde el código, en la carpeta del proyecto.
     if os.environ.get("INVENTARIO_CARPETA_LOCAL"):
         return os.environ["INVENTARIO_CARPETA_LOCAL"]
     if CONGELADO:
@@ -46,16 +52,6 @@ def guardar_config(**cambios):
     os.replace(tmp, CONFIG_PATH)
 
 
-def configurado():
-    """True si el usuario ya eligió dónde guardar los datos (carpeta compartida o solo esta PC)."""
-    return "carpeta_datos" in leer_config()
-
-
-def carpeta_configurada():
-    c = leer_config().get("carpeta_datos") or ""
-    return c if c and os.path.isdir(c) else CARPETA_LOCAL
-
-
 DATA_DIR = FOTOS_DIR = DB_PATH = ""
 
 
@@ -67,43 +63,25 @@ def usar_carpeta(carpeta):
     DB_PATH = os.path.join(DATA_DIR, "inventario.db")
 
 
-usar_carpeta(carpeta_configurada())
+usar_carpeta(CARPETA_LOCAL)
 
 
 def ruta_foto(nombre):
     return os.path.join(FOTOS_DIR, nombre) if nombre else ""
 
 
-def es_compartida():
-    return os.path.normcase(DATA_DIR) != os.path.normcase(os.path.abspath(CARPETA_LOCAL))
-
-
-def copiar_datos(origen, destino):
-    """Copia inventario.db y fotos/ de una carpeta a otra (sin sobrescribir una base existente)."""
-    os.makedirs(os.path.join(destino, "fotos"), exist_ok=True)
-    db_o = os.path.join(origen, "inventario.db")
-    if os.path.exists(db_o) and not os.path.exists(os.path.join(destino, "inventario.db")):
-        # Copia consistente aunque la base esté abierta.
-        src = sqlite3.connect(db_o)
-        dst = sqlite3.connect(os.path.join(destino, "inventario.db"))
-        with dst:
-            src.backup(dst)
-        src.close()
-        dst.close()
-    fotos_o = os.path.join(origen, "fotos")
-    if os.path.isdir(fotos_o):
-        for a in os.listdir(fotos_o):
-            d = os.path.join(destino, "fotos", a)
-            if not os.path.exists(d):
-                shutil.copy2(os.path.join(fotos_o, a), d)
-
-
 def preparar_datos():
     os.makedirs(FOTOS_DIR, exist_ok=True)
 
 
+def ahora_ms():
+    return int(time.time() * 1000)
+
+
 CAMPOS = ["no_inventario", "area", "descripcion", "observaciones", "marca", "modelo",
           "serie", "estado", "practicas", "resumen", "comentarios", "foto", "costo"]
+# Campos de un equipo que viajan en el inventario en línea
+CAMPOS_DOC = CAMPOS + ["folio", "area_anterior", "creado", "actualizado"]
 
 ESTADOS = ["", "FUNCIONAL", "MAL ESTADO", "PENDIENTE DE VALORAR", "EN REPARACIÓN", ESTADO_BAJA]
 
@@ -136,6 +114,40 @@ def formato_costo(valor):
     return "" if valor is None or valor == "" else f"${float(valor):,.2f}"
 
 
+# ------------------------------------------------------------------ esquema
+def conectar(path):
+    # timeout alto: el sincronizador escribe en la misma base desde otro hilo.
+    con = sqlite3.connect(path, timeout=20)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def crear_esquema(con):
+    con.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS areas(
+            nombre TEXT PRIMARY KEY, orden INTEGER);
+        CREATE TABLE IF NOT EXISTS equipos(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            no_inventario TEXT, area TEXT, descripcion TEXT, observaciones TEXT,
+            marca TEXT, modelo TEXT, serie TEXT, estado TEXT DEFAULT '',
+            practicas TEXT, resumen TEXT, comentarios TEXT, foto TEXT,
+            creado TEXT, actualizado TEXT);
+        CREATE INDEX IF NOT EXISTS ix_inv ON equipos(no_inventario);
+        CREATE TABLE IF NOT EXISTS meta(clave TEXT PRIMARY KEY, valor TEXT);
+        CREATE TABLE IF NOT EXISTS borrados(clave TEXT PRIMARY KEY, t INTEGER);
+        """
+    )
+    cols = [r[1] for r in con.execute("PRAGMA table_info(equipos)")]
+    for col, tipo in (("folio", "INTEGER"), ("costo", "REAL"), ("area_anterior", "TEXT"),
+                      ("uid", "TEXT"), ("t", "INTEGER DEFAULT 0")):
+        if col not in cols:
+            con.execute(f"ALTER TABLE equipos ADD COLUMN {col} {tipo}")
+    if "t" not in [r[1] for r in con.execute("PRAGMA table_info(areas)")]:
+        con.execute("ALTER TABLE areas ADD COLUMN t INTEGER DEFAULT 0")
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_folio ON equipos(folio)")
+
+
 class Database:
     def __init__(self, path=None):
         preparar_datos()
@@ -143,28 +155,16 @@ class Database:
         self.con = None
         self._abrir()
 
-    # ---- conexión / recarga automática ----
+    # ---- conexión / detección de cambios hechos por el sincronizador ----
     def _abrir(self):
         if self.con is not None:
             try:
                 self.con.close()
             except sqlite3.Error:
                 pass
-        # timeout alto: en carpetas de red otra PC puede estar escribiendo en ese momento.
-        self.con = sqlite3.connect(self.path, timeout=15)
-        self.con.row_factory = sqlite3.Row
-        # Modo de diario clásico: WAL no funciona bien en carpetas de red ni sincronizadas.
-        self.con.execute("PRAGMA journal_mode=DELETE")
+        self.con = conectar(self.path)
         self._migrar()
-        self._firma = self._firma_archivo()
         self._version = self._data_version()
-
-    def _firma_archivo(self):
-        try:
-            st = os.stat(self.path)
-            return st.st_mtime_ns, st.st_size
-        except OSError:
-            return None
 
     def _data_version(self):
         try:
@@ -174,20 +174,10 @@ class Database:
 
     def _commit(self):
         self.con.commit()
-        self._firma = self._firma_archivo()
         self._version = self._data_version()
 
     def hubo_cambios_externos(self):
-        """True si otra computadora (u otro programa) modificó la base desde la última lectura.
-
-        Si el archivo fue reemplazado (p. ej. por OneDrive/Google Drive), se reabre la conexión.
-        """
-        firma = self._firma_archivo()
-        if firma is None:
-            return False
-        if firma != self._firma:
-            self._abrir()
-            return True
+        """True si otra conexión (el sincronizador) modificó la base desde la última lectura."""
         v = self._data_version()
         if v != self._version:
             self._version = v
@@ -195,31 +185,14 @@ class Database:
         return False
 
     def _migrar(self):
-        self.con.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS areas(
-                nombre TEXT PRIMARY KEY, orden INTEGER);
-            CREATE TABLE IF NOT EXISTS equipos(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                no_inventario TEXT, area TEXT, descripcion TEXT, observaciones TEXT,
-                marca TEXT, modelo TEXT, serie TEXT, estado TEXT DEFAULT '',
-                practicas TEXT, resumen TEXT, comentarios TEXT, foto TEXT,
-                creado TEXT, actualizado TEXT);
-            CREATE INDEX IF NOT EXISTS ix_inv ON equipos(no_inventario);
-            CREATE TABLE IF NOT EXISTS meta(clave TEXT PRIMARY KEY, valor TEXT);
-            """
-        )
-        cols = [r[1] for r in self.con.execute("PRAGMA table_info(equipos)")]
-        if "folio" not in cols:
-            self.con.execute("ALTER TABLE equipos ADD COLUMN folio INTEGER")
-        if "costo" not in cols:
-            self.con.execute("ALTER TABLE equipos ADD COLUMN costo REAL")
-        if "area_anterior" not in cols:
-            self.con.execute("ALTER TABLE equipos ADD COLUMN area_anterior TEXT")
-        self.con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_folio ON equipos(folio)")
+        crear_esquema(self.con)
         # Equipos sin folio (bases anteriores): se numeran en orden de alta.
         for (eid,) in self.con.execute("SELECT id FROM equipos WHERE folio IS NULL ORDER BY id").fetchall():
             self.con.execute("UPDATE equipos SET folio=? WHERE id=?", (self._siguiente_folio(), eid))
+        # Identificador global. Los equipos que ya existían usan su folio, así dos computadoras que
+        # partieron del mismo inventario reconocen que se trata del mismo equipo.
+        self.con.execute("UPDATE equipos SET uid='folio-' || folio WHERE uid IS NULL")
+        self.con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_uid ON equipos(uid)")
         self._areas_en_mayusculas()
         self._mover_bajas()
         if self.con.in_transaction:
@@ -227,31 +200,33 @@ class Database:
 
     def _areas_en_mayusculas(self):
         """Todas las áreas en mayúsculas (incluye acentos, que UPPER() de SQLite no convierte)."""
-        cambio = False
         for (nombre,) in self.con.execute("SELECT nombre FROM areas").fetchall():
             nuevo = normalizar_area(nombre)
             if nuevo != nombre:
                 self._renombrar_sin_commit(nombre, nuevo)
-                cambio = True
         for (area,) in self.con.execute("SELECT DISTINCT area FROM equipos WHERE area IS NOT NULL").fetchall():
             nuevo = normalizar_area(area)
             if nuevo != area:
-                self.con.execute("UPDATE equipos SET area=? WHERE area=?", (nuevo, area))
-                cambio = True
-        return cambio
+                self.con.execute("UPDATE equipos SET area=?, t=? WHERE area=?", (nuevo, ahora_ms(), area))
 
     def _mover_bajas(self):
         """Los equipos dados de baja viven siempre en el área de bajas."""
         filas = self.con.execute("SELECT id, area FROM equipos WHERE estado=? AND area IS NOT ?",
                                  (ESTADO_BAJA, AREA_BAJAS)).fetchall()
         for eid, area in filas:
-            self.con.execute("UPDATE equipos SET area_anterior=?, area=? WHERE id=?", (area, AREA_BAJAS, eid))
+            self.con.execute("UPDATE equipos SET area_anterior=?, area=?, t=? WHERE id=?",
+                             (area, AREA_BAJAS, ahora_ms(), eid))
         if filas:
             self._asegurar_area_bajas()
-        return bool(filas)
 
     def _asegurar_area_bajas(self):
-        self.con.execute("INSERT OR IGNORE INTO areas(nombre, orden) VALUES(?, 1000000)", (AREA_BAJAS,))
+        self._insertar_area(AREA_BAJAS, 1000000)
+
+    def _insertar_area(self, nombre, orden):
+        if self.con.execute("SELECT 1 FROM areas WHERE nombre=?", (nombre,)).fetchone():
+            return
+        self.con.execute("INSERT INTO areas(nombre, orden, t) VALUES(?,?,?)", (nombre, orden, ahora_ms()))
+        self.con.execute("DELETE FROM borrados WHERE clave=?", ("a:" + nombre,))
 
     # ---- folios ----
     def proximo_folio(self):
@@ -265,7 +240,9 @@ class Database:
         return r is not None
 
     def cambiar_folio(self, eid, folio):
-        self.con.execute("UPDATE equipos SET folio=? WHERE id=?", (folio, eid))
+        actual = self.con.execute("SELECT folio FROM equipos WHERE id=?", (eid,)).fetchone()
+        if actual is not None and actual[0] != folio:
+            self.con.execute("UPDATE equipos SET folio=?, t=? WHERE id=?", (folio, ahora_ms(), eid))
         r = self.con.execute("SELECT valor FROM meta WHERE clave='ultimo_folio'").fetchone()
         if folio > (int(r[0]) if r else 0):
             self.con.execute("INSERT OR REPLACE INTO meta(clave, valor) VALUES('ultimo_folio', ?)", (str(folio),))
@@ -273,9 +250,7 @@ class Database:
 
     def _siguiente_folio(self):
         """Folio único y consecutivo; nunca se reutiliza aunque se elimine un equipo."""
-        r = self.con.execute("SELECT valor FROM meta WHERE clave='ultimo_folio'").fetchone()
-        maximo = self.con.execute("SELECT COALESCE(MAX(folio),0) FROM equipos").fetchone()[0]
-        n = max(int(r[0]) if r else 0, maximo) + 1
+        n = self.proximo_folio()
         self.con.execute("INSERT OR REPLACE INTO meta(clave, valor) VALUES('ultimo_folio', ?)", (str(n),))
         return n
 
@@ -297,7 +272,7 @@ class Database:
         else:
             orden = self.con.execute(
                 "SELECT COALESCE(MAX(orden),0)+1 FROM areas WHERE nombre<>?", (AREA_BAJAS,)).fetchone()[0]
-            self.con.execute("INSERT OR IGNORE INTO areas(nombre, orden) VALUES(?,?)", (nombre, orden))
+            self._insertar_area(nombre, orden)
         self._commit()
 
     def existe_area(self, nombre):
@@ -306,17 +281,17 @@ class Database:
                     or self.con.execute("SELECT 1 FROM equipos WHERE area=? LIMIT 1", (nombre,)).fetchone())
 
     def _renombrar_sin_commit(self, viejo, nuevo):
+        t = ahora_ms()
         fila = self.con.execute("SELECT orden FROM areas WHERE nombre=?", (viejo,)).fetchone()
-        destino = self.con.execute("SELECT orden FROM areas WHERE nombre=?", (nuevo,)).fetchone()
         if fila is not None:
             self.con.execute("DELETE FROM areas WHERE nombre=?", (viejo,))
-            if destino is None:
-                self.con.execute("INSERT INTO areas(nombre, orden) VALUES(?,?)", (nuevo, fila["orden"]))
-        elif destino is None:
+            self.con.execute("INSERT OR REPLACE INTO borrados(clave, t) VALUES(?,?)", ("a:" + viejo, t))
+            self._insertar_area(nuevo, fila["orden"])
+        else:
             orden = self.con.execute("SELECT COALESCE(MAX(orden),0)+1 FROM areas").fetchone()[0]
-            self.con.execute("INSERT INTO areas(nombre, orden) VALUES(?,?)", (nuevo, orden))
-        self.con.execute("UPDATE equipos SET area=? WHERE area=?", (nuevo, viejo))
-        self.con.execute("UPDATE equipos SET area_anterior=? WHERE area_anterior=?", (nuevo, viejo))
+            self._insertar_area(nuevo, orden)
+        self.con.execute("UPDATE equipos SET area=?, t=? WHERE area=?", (nuevo, t, viejo))
+        self.con.execute("UPDATE equipos SET area_anterior=?, t=? WHERE area_anterior=?", (nuevo, t, viejo))
 
     def renombrar_area(self, viejo, nuevo):
         """Cambia el nombre de un área (si el nuevo ya existe, se unen). Devuelve el nombre final."""
@@ -419,6 +394,10 @@ class Database:
                 d["area"] = anterior
                 self.agregar_area(anterior)
             d["area_anterior"] = None
+        if d.get("area") and d["area"] != AREA_BAJAS:
+            orden = self.con.execute(
+                "SELECT COALESCE(MAX(orden),0)+1 FROM areas WHERE nombre<>?", (AREA_BAJAS,)).fetchone()[0]
+            self._insertar_area(d["area"], orden)
         return d
 
     def agregar_equipo(self, datos):
@@ -428,9 +407,9 @@ class Database:
         campos = CAMPOS + (["area_anterior"] if "area_anterior" in d else [])
         now = datetime.now().isoformat(timespec="seconds")
         cur = self.con.execute(
-            f"INSERT INTO equipos({','.join(campos)}, folio, creado, actualizado) "
-            f"VALUES({','.join('?' * len(campos))}, ?, ?, ?)",
-            [d[k] for k in campos] + [self._siguiente_folio(), now, now])
+            f"INSERT INTO equipos({','.join(campos)}, folio, creado, actualizado, uid, t) "
+            f"VALUES({','.join('?' * len(campos))}, ?, ?, ?, ?, ?)",
+            [d[k] for k in campos] + [self._siguiente_folio(), now, now, uuid.uuid4().hex, ahora_ms()])
         self._commit()
         return cur.lastrowid
 
@@ -441,15 +420,71 @@ class Database:
         if "estado" in cambios or "area" in cambios or "costo" in cambios:
             cambios = self._aplicar_reglas(cambios, self.obtener(eid))
         sets = ", ".join(f"{k}=?" for k in cambios)
-        self.con.execute(f"UPDATE equipos SET {sets}, actualizado=? WHERE id=?",
-                         list(cambios.values()) + [datetime.now().isoformat(timespec="seconds"), eid])
+        self.con.execute(f"UPDATE equipos SET {sets}, actualizado=?, t=? WHERE id=?",
+                         list(cambios.values()) + [datetime.now().isoformat(timespec="seconds"), ahora_ms(), eid])
         self._commit()
 
     def eliminar_equipo(self, eid):
         eq = self.obtener(eid)
         self.con.execute("DELETE FROM equipos WHERE id=?", (eid,))
+        if eq and eq.get("uid"):
+            self.con.execute("INSERT OR REPLACE INTO borrados(clave, t) VALUES(?,?)", ("e:" + eq["uid"], ahora_ms()))
         self._commit()
         if eq and eq.get("foto"):
             p = os.path.join(FOTOS_DIR, eq["foto"])
             if os.path.exists(p):
                 os.remove(p)
+
+
+# ------------------------------------------------------------------ documento sincronizable
+def exportar_doc(con):
+    """Todo el inventario como {"registros": {clave: registro}, "meta": {...}}.
+
+    Claves: "e:<uid>" para equipos y "a:<NOMBRE>" para áreas. Los borrados son {"borrado": True, "t": ...}.
+    """
+    reg = {}
+    for r in con.execute(f"SELECT uid, t, {', '.join(CAMPOS_DOC)} FROM equipos"):
+        d = dict(r)
+        reg["e:" + d.pop("uid")] = d
+    for r in con.execute("SELECT nombre, orden, t FROM areas"):
+        reg["a:" + r["nombre"]] = {"orden": r["orden"], "t": r["t"] or 0}
+    for r in con.execute("SELECT clave, t FROM borrados"):
+        if r["clave"] not in reg:
+            reg[r["clave"]] = {"borrado": True, "t": r["t"]}
+    m = con.execute("SELECT valor FROM meta WHERE clave='ultimo_folio'").fetchone()
+    return {"formato": 1, "registros": reg, "meta": {"ultimo_folio": int(m[0]) if m else 0}}
+
+
+def importar_doc(con, doc, actual=None):
+    """Aplica a la base local las diferencias entre `actual` (lo que hay) y `doc` (lo que debe haber)."""
+    actual = actual if actual is not None else exportar_doc(con)
+    nuevos, viejos = doc["registros"], actual["registros"]
+    cambios = {k: v for k, v in nuevos.items() if viejos.get(k) != v}
+    # Primero se liberan los folios de los equipos que cambian, para no chocar con el índice único.
+    for k, v in cambios.items():
+        if k.startswith("e:"):
+            con.execute("UPDATE equipos SET folio=NULL WHERE uid=?", (k[2:],))
+    for k, v in cambios.items():
+        tipo, clave = k[:2], k[2:]
+        if v.get("borrado"):
+            if tipo == "e:":
+                con.execute("DELETE FROM equipos WHERE uid=?", (clave,))
+            else:
+                con.execute("DELETE FROM areas WHERE nombre=?", (clave,))
+            con.execute("INSERT OR REPLACE INTO borrados(clave, t) VALUES(?,?)", (k, v["t"]))
+            continue
+        con.execute("DELETE FROM borrados WHERE clave=?", (k,))
+        if tipo == "a:":
+            con.execute("INSERT OR REPLACE INTO areas(nombre, orden, t) VALUES(?,?,?)", (clave, v.get("orden"), v["t"]))
+            continue
+        valores = [v.get(c) for c in CAMPOS_DOC] + [v["t"]]
+        if con.execute("SELECT 1 FROM equipos WHERE uid=?", (clave,)).fetchone():
+            con.execute(f"UPDATE equipos SET {', '.join(c + '=?' for c in CAMPOS_DOC)}, t=? WHERE uid=?",
+                        valores + [clave])
+        else:
+            con.execute(f"INSERT INTO equipos({', '.join(CAMPOS_DOC)}, t, uid) "
+                        f"VALUES({', '.join('?' * (len(CAMPOS_DOC) + 1))}, ?)", valores + [clave])
+    m = doc.get("meta", {}).get("ultimo_folio", 0)
+    if m != actual.get("meta", {}).get("ultimo_folio", 0):
+        con.execute("INSERT OR REPLACE INTO meta(clave, valor) VALUES('ultimo_folio', ?)", (str(m),))
+    return len(cambios)
